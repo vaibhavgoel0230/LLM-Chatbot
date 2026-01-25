@@ -1,6 +1,6 @@
 from importlib.metadata import metadata
 import streamlit as st
-from langgraph_backend import chatbot
+from langgraph_backend import chatbot, retrieve_all_chat_threads
 from langchain_core.messages import HumanMessage, AIMessage
 import uuid
 
@@ -54,16 +54,34 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = generate_thread_id()
 
 if "chat_threads" not in st.session_state:
-    st.session_state.chat_threads = {}
+    st.session_state.chat_threads = retrieve_all_chat_threads()
 
 if "chat_thread_order" not in st.session_state:
     st.session_state.chat_thread_order = []
 
+if st.session_state.chat_threads and not st.session_state.chat_thread_order:
+    st.session_state.chat_thread_order = list(st.session_state.chat_threads.keys())
+
 add_chat_thread(st.session_state.thread_id)
 # Main UI
-for msg in st.session_state.message_history:
-    with st.chat_message(msg["role"]):
-        st.text(msg["content"])
+if len(st.session_state.message_history) > 0:   
+    for msg in st.session_state.message_history:
+        with st.chat_message(msg["role"]):
+            st.text(msg["content"])
+else:
+    st.markdown(
+        """
+        <div style="text-align:center; padding: 3rem 1rem; color: #9aa0a6;">
+            <div style="font-size: 3rem; font-weight: 600; margin-bottom: 0.5rem;">
+                How can I help you today?
+            </div>
+            <div style="font-size: 1.2rem;">
+                Start a new chat to get started.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 user_input = st.chat_input("Enter a message")
 

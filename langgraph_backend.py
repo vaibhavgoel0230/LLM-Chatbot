@@ -4,8 +4,9 @@ from langchain_openai import ChatOpenAI
 from typing import TypedDict, Annotated, Literal
 from pydantic import BaseModel, Field
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver 
 from dotenv import load_dotenv
+import sqlite3
 
 load_dotenv()
 
@@ -17,9 +18,10 @@ llm = ChatOpenAI(model='gpt-4o-mini')
 def chat_node(state: ChatState):
   messages = state['messages']
   response = llm.invoke(messages)
-  return {'messages': [response]}
+  return {'messages': [response]}       
 
-checkpointer = MemorySaver()
+conn = sqlite3.connect(database='chatbot.db', check_same_thread=False)
+checkpointer = SqliteSaver(conn=conn)
 graph = StateGraph(ChatState)
 
 graph.add_node('chat_node', chat_node)
@@ -28,3 +30,20 @@ graph.add_edge(START, 'chat_node')
 graph.add_edge('chat_node', END)
 
 chatbot = graph.compile(checkpointer=checkpointer)
+
+def retrieve_all_chat_threads():
+    all_threads = {}
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
+        thread_ids = [row[0] for row in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        return all_threads
+
+    for thread_id in thread_ids:
+        state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
+        messages = state.values.get("messages", [])
+        first_message = messages[0].content if messages else None
+        all_threads[thread_id] = {"thread_id": thread_id, "latest_message": first_message}
+
+    return all_threads
