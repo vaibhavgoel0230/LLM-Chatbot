@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 try:
     from langchain_community.tools import DuckDuckGoSearchRun
@@ -39,3 +40,12 @@ def calculator_tool(first_num: float, second_num: float, operation: str) -> dict
     except Exception as e:
         return {"error": f"Error: {e}"}
 
+
+client = MultiServerMCPClient(
+    {
+        "expense": {
+            "transport": "streamable_http",
+            "url": "https://splendid-gold-dingo.fastmcp.app/mcp"
+        }
+    }
+)

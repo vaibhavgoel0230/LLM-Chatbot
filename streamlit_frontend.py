@@ -1,8 +1,9 @@
 from importlib.metadata import metadata
 import streamlit as st
-from langgraph_backend import chatbot, retrieve_all_chat_threads
+from langgraph_backend import chatbot, retrieve_all_chat_threads, submit_async_task
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid
+import queue
 
 def generate_thread_id():
     thread_id = str(uuid.uuid4())
@@ -86,7 +87,6 @@ else:
         unsafe_allow_html=True,
     )
 
-print(st.session_state.message_history)
 user_input = st.chat_input("Enter a message")
 
 if user_input:
@@ -108,11 +108,34 @@ if user_input:
         #             yield message_chunk.content
         status_holder = {"box": None}
         def ai_only_stream():
-            for message_chunk, metadata in chatbot.stream(
-                {"messages": [HumanMessage(content=user_input)]},
-                config=CONFIG,
-                stream_mode="messages",
-            ):
+            event_queue = queue.Queue()
+
+            async def run_stream():
+                try:
+                    async for message_chunk, metadata in chatbot.astream(
+                        {"messages": [HumanMessage(content=user_input)]},
+                        config=CONFIG,
+                        stream_mode="messages",
+                    ):
+                        event_queue.put((message_chunk, metadata))
+                except Exception as e:
+                    event_queue.put((None, str(e)))
+                finally:
+                    event_queue.put(None)
+
+            submit_async_task(run_stream())
+
+            while True:
+                event = event_queue.get()
+                if event is None:
+                    break
+                message_chunk, metadata = event
+
+                # Stream failed with an exception
+                if message_chunk is None and isinstance(metadata, str):
+                    yield f"Error: {metadata}"
+                    continue
+
                 # Lazily create & update the SAME status container when any tool runs
                 if isinstance(message_chunk, ToolMessage):
                     tool_name = getattr(message_chunk, "name", "tool")
@@ -131,7 +154,6 @@ if user_input:
                 if isinstance(message_chunk, AIMessage):
                     yield message_chunk.content
         ai_message = st.write_stream(ai_only_stream())
-        print(ai_message)
         # Finalize only if a tool was actually used
         if status_holder["box"] is not None:
             status_holder["box"].update(
