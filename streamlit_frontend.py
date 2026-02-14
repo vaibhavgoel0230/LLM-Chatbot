@@ -1,7 +1,7 @@
-from importlib.metadata import metadata
 import streamlit as st
 from langgraph_backend import chatbot, retrieve_all_chat_threads, submit_async_task
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from rag_utils import ingest_pdf, thread_document_metadata
 import uuid
 import queue
 
@@ -41,6 +41,8 @@ def select_chat_thread(thread_id):
         elif isinstance(message, AIMessage):
             message_history.append({"role": "assistant", "content": message.content})
     st.session_state.message_history = message_history
+    st.session_state["ingested_docs"].setdefault(str(thread_id), {})
+    
     if messages:
         first_message = messages[0].content
         thread_info = st.session_state.chat_threads.get(thread_id)
@@ -60,10 +62,16 @@ if "chat_threads" not in st.session_state:
 if "chat_thread_order" not in st.session_state:
     st.session_state.chat_thread_order = []
 
+if "ingested_docs" not in st.session_state:
+    st.session_state["ingested_docs"] = {}
+
 if st.session_state.chat_threads and not st.session_state.chat_thread_order:
     st.session_state.chat_thread_order = list(st.session_state.chat_threads.keys())
 
 add_chat_thread(st.session_state.thread_id)
+
+thread_key = str(st.session_state["thread_id"])
+thread_docs = st.session_state["ingested_docs"].setdefault(thread_key, {})
 
 # Main UI
 if len(st.session_state.message_history) > 0:   
@@ -87,7 +95,7 @@ else:
         unsafe_allow_html=True,
     )
 
-user_input = st.chat_input("Enter a message")
+user_input = st.chat_input("Ask about your document or use tools")
 
 if user_input:
     st.session_state.message_history.append({"role": "user", "content": user_input})
@@ -162,6 +170,13 @@ if user_input:
 
     st.session_state.message_history.append({"role": "assistant", "content": ai_message})
 
+    doc_meta = thread_document_metadata(thread_key)
+    if doc_meta:
+        st.caption(
+            f"Document indexed: {doc_meta.get('filename')} "
+            f"(chunks: {doc_meta.get('chunks')}, pages: {doc_meta.get('documents')})"
+        )
+
 # Sidebar UI
 st.sidebar.title("LangGraph Chatbot")
 st.sidebar.markdown("This is a chatbot powered by LangGraph and OpenAI.")
@@ -186,6 +201,31 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 st.sidebar.button('New Chat', on_click=new_chat)
+
+if thread_docs:
+    latest_doc = list(thread_docs.values())[-1]
+    st.sidebar.success(
+        f"Using `{latest_doc.get('filename')}` "
+        f"({latest_doc.get('chunks')} chunks from {latest_doc.get('documents')} pages)"
+    )
+else:
+    st.sidebar.info("No PDF indexed yet.")
+
+uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chart", type=["pdf"])
+if uploaded_pdf:
+    if uploaded_pdf.name in thread_docs:
+        st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
+    else:
+        with st.sidebar.status("Indexing PDF...", expanded = True) as status_box:
+            summary = ingest_pdf(
+                uploaded_pdf.getvalue(),
+                thread_id=thread_key,
+                filename=uploaded_pdf.name,
+            )
+            thread_docs[uploaded_pdf.name] = summary
+            status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+            st.rerun()
+
 st.sidebar.header("My Chats")
 
 for thread_id in st.session_state.chat_thread_order[::-1]:

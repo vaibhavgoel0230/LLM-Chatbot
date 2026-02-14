@@ -1,5 +1,7 @@
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from rag_utils import get_retriever, get_thread_metadata
+from typing import Optional
 
 try:
     from langchain_community.tools import DuckDuckGoSearchRun
@@ -40,6 +42,29 @@ def calculator_tool(first_num: float, second_num: float, operation: str) -> dict
     except Exception as e:
         return {"error": f"Error: {e}"}
 
+@tool
+def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+    """
+    Retrieve relevant information from the uploaded PDF for this chat thread.
+    Always include the thread_id when calling this tool.
+    """
+    retriever = get_retriever(thread_id)
+    if retriever is None:
+        return {
+            "error": "No document indexed for this chat. Upload a PDF first.",
+            "query": query,
+        }
+
+    result = retriever.invoke(query)
+    context = [doc.page_content for doc in result]
+    metadata = [doc.metadata for doc in result]
+
+    return {
+        "query": query,
+        "context": context,
+        "metadata": metadata,
+        "source_file": get_thread_metadata().get(str(thread_id), {}).get("filename")
+    }
 
 client = MultiServerMCPClient(
     {
